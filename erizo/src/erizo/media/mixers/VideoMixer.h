@@ -17,10 +17,6 @@ namespace erizo {
 class WebRtcConnection;
 class RTPSink;
 
-/**
-* Represents a One to Many connection.
-* Receives media from one publisher and retransmits it to every subscriber.
-*/
 class VideoMixer : public MediaSink, public RawDataReceiver, public RTPDataReceiver {
   DECLARE_LOGGER();
 
@@ -46,10 +42,11 @@ class VideoMixer : public MediaSink, public RawDataReceiver, public RTPDataRecei
   * @param peerId the peerId
   */
   void removePublisher(int peerSSRC);
-  int deliverAudioData(char* buf, int len);
-  int deliverVideoData(char* buf, int len);
-  void receiveRawData(const RawDataPacket& packet);
-  void receiveRtpData(unsigned char* rtpdata, int len);
+  int deliverAudioData_(std::shared_ptr<DataPacket> audio_packet) override;
+  int deliverVideoData_(std::shared_ptr<DataPacket> video_packet) override;
+
+  void receiveRawData(const RawDataPacket& packet) override;
+  void receiveRtpData(unsigned char* rtpdata, int len) override;
 
   void closeSink();
 
@@ -65,7 +62,7 @@ class VideoMixer : public MediaSink, public RawDataReceiver, public RTPDataRecei
   char sendVideoBuffer_[2000];
   char sendAudioBuffer_[2000];
   RTPSink* sink_;
-  std::vector<dataPacket> head;
+  std::vector<DataPacket> head;
   int gotFrame_, gotDecodedFrame_, size_;
   void sendHead(WebRtcConnection* conn);
   RtpVP8Parser pars;

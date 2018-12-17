@@ -10,22 +10,19 @@
 #include "./MediaDefinitions.h"
 #include "./SdpInfo.h"
 #include "rtp/RtpHeaders.h"
+#include "pipeline/Service.h"
 
 namespace erizo {
 
-class SrData {
+class SrDelayData {
  public:
-  uint32_t srNtp;
-  struct timeval timestamp;
+  uint32_t sr_ntp;
+  uint64_t sr_send_time;
 
-  SrData() {
-    srNtp = 0;
-    timestamp = (struct timeval) {0, 0};
-  }
-  SrData(uint32_t srNTP, struct timeval theTimestamp) {
-    this->srNtp = srNTP;
-    this->timestamp = theTimestamp;
-  }
+  SrDelayData() : sr_ntp{0}, sr_send_time{0} {}
+
+  SrDelayData(uint32_t ntp, uint64_t send_time) : sr_ntp{ntp},
+    sr_send_time{send_time} {}
 };
 
 class RtcpData {
@@ -59,10 +56,10 @@ class RtcpData {
   uint16_t nackBlp;
 
   // time based data flow limits
-  struct timeval lastSrUpdated, lastREMBSent;
-  struct timeval lastSrReception, lastRrWasScheduled;
+  uint64_t last_sr_updated, last_remb_sent;
+  uint64_t last_sr_reception, last_rr_was_scheduled;
   // to prevent sending too many reports, track time of last
-  struct timeval lastRrSent;
+  uint64_t last_rr_sent;
 
   bool shouldSendPli;
   bool shouldSendREMB;
@@ -73,7 +70,7 @@ class RtcpData {
 
   MediaType mediaType;
 
-  std::list<boost::shared_ptr<SrData>> senderReports;
+  std::list<boost::shared_ptr<SrDelayData>> senderReports;
   std::set<uint32_t> nackedPackets_;
 
   RtcpData() {
@@ -100,32 +97,34 @@ class RtcpData {
     shouldReset = false;
     nackSeqnum = 0;
     nackBlp = 0;
-    lastRrSent = (struct timeval){0, 0};
-    lastREMBSent = (struct timeval){0, 0};
-    lastSrReception = (struct timeval){0, 0};
-    lastRrWasScheduled = (struct timeval){0, 0};
+    last_rr_sent = 0;
+    last_remb_sent = 0;
+    last_sr_reception = 0;
+    last_rr_was_scheduled = 0;
   }
 
   // lock for any blocking data change
   boost::mutex dataLock;
 };
 
-class RtcpProcessor{
+class RtcpProcessor : public Service {
  public:
-  RtcpProcessor(MediaSink* msink, MediaSource* msource, uint32_t maxVideoBw = 300000):
-    rtcpSink_(msink), rtcpSource_(msource) {}
+  RtcpProcessor(MediaSink* msink, MediaSource* msource, uint32_t max_video_bw = 300000):
+    rtcpSink_(msink), rtcpSource_(msource), max_video_bw_{max_video_bw} {}
   virtual ~RtcpProcessor() {}
   virtual void addSourceSsrc(uint32_t ssrc) = 0;
-  virtual void setMaxVideoBW(uint32_t bandwidth) = 0;
   virtual void setPublisherBW(uint32_t bandwidth) = 0;
   virtual void analyzeSr(RtcpHeader* chead) = 0;
   virtual int analyzeFeedback(char* buf, int len) = 0;
   virtual void checkRtcpFb() = 0;
 
+  virtual void setMaxVideoBW(uint32_t bandwidth) { max_video_bw_ = bandwidth; }
+  virtual uint32_t getMaxVideoBW() { return max_video_bw_; }
+
  protected:
   MediaSink* rtcpSink_;  // The sink to send RRs
   MediaSource* rtcpSource_;  // The source of SRs
-  uint32_t maxVideoBw_;
+  uint32_t max_video_bw_;
 };
 
 }  // namespace erizo

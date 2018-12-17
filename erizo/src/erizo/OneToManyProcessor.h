@@ -7,6 +7,7 @@
 
 #include <map>
 #include <string>
+#include <future>  // NOLINT
 
 #include "./MediaDefinitions.h"
 #include "media/ExternalOutput.h"
@@ -14,7 +15,7 @@
 
 namespace erizo {
 
-class WebRtcConnection;
+class MediaStream;
 
 /**
 * Represents a One to Many connection.
@@ -24,36 +25,41 @@ class OneToManyProcessor : public MediaSink, public FeedbackSink {
   DECLARE_LOGGER();
 
  public:
-  std::map<std::string, boost::shared_ptr<MediaSink> > subscribers;
-  boost::shared_ptr<MediaSource> publisher;
+  std::map<std::string, std::shared_ptr<MediaSink>> subscribers;
+  std::shared_ptr<MediaSource> publisher;
 
   OneToManyProcessor();
   virtual ~OneToManyProcessor();
   /**
   * Sets the Publisher
-  * @param webRtcConn The WebRtcConnection of the Publisher
+  * @param webRtcConn The MediaStream of the Publisher
   */
-  void setPublisher(MediaSource* webRtcConn);
+  void setPublisher(std::shared_ptr<MediaSource> publisher_stream);
   /**
   * Sets the subscriber
-  * @param webRtcConn The WebRtcConnection of the subscriber
+  * @param webRtcConn The MediaStream of the subscriber
   * @param peerId An unique Id for the subscriber
   */
-  void addSubscriber(MediaSink* webRtcConn, const std::string& peerId);
+  void addSubscriber(std::shared_ptr<MediaSink> subscriber_stream, const std::string& peer_id);
   /**
   * Eliminates the subscriber given its peer id
   * @param peerId the peerId
   */
-  void removeSubscriber(const std::string& peerId);
+  void removeSubscriber(const std::string& peer_id);
+
+  void close() override;
 
  private:
-  typedef boost::shared_ptr<MediaSink> sink_ptr;
+  typedef std::shared_ptr<MediaSink> sink_ptr;
   FeedbackSink* feedbackSink_;
 
-  int deliverAudioData_(char* buf, int len);
-  int deliverVideoData_(char* buf, int len);
-  int deliverFeedback_(char* buf, int len);
+  int deliverAudioData_(std::shared_ptr<DataPacket> audio_packet) override;
+  int deliverVideoData_(std::shared_ptr<DataPacket> video_packet) override;
+  int deliverFeedback_(std::shared_ptr<DataPacket> fb_packet) override;
+  int deliverEvent_(MediaEventPtr event) override;
   void closeAll();
+  bool isSSRCFromAudio(uint32_t ssrc);
+  uint32_t translateAndMaybeAdaptForSimulcast(uint32_t orig_ssrc);
 };
 
 }  // namespace erizo

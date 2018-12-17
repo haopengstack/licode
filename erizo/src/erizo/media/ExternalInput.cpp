@@ -10,12 +10,9 @@
 
 #include "./WebRtcConnection.h"
 
-using std::memcpy;
-
 namespace erizo {
 DEFINE_LOGGER(ExternalInput, "media.ExternalInput");
 ExternalInput::ExternalInput(const std::string& inputUrl):url_(inputUrl) {
-  sourcefbSink_ = NULL;
   context_ = NULL;
   running_ = false;
   needTranscoding_ = false;
@@ -62,7 +59,8 @@ int ExternalInput::init() {
 
   // VideoCodecInfo info;
   MediaInfo om;
-  AVStream *st, *audio_st;
+  AVStream *st = nullptr;
+  AVStream *audio_st = nullptr;
 
   int streamNo = av_find_best_stream(context_, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
   if (streamNo < 0) {
@@ -111,16 +109,18 @@ int ExternalInput::init() {
     decodedBuffer_.reset((unsigned char*) malloc(100000));
     MediaInfo om;
     om.processorType = PACKAGE_ONLY;
-    if (audio_st->codec->codec_id == AV_CODEC_ID_PCM_MULAW) {
-      ELOG_DEBUG("PCM U8");
-      om.audioCodec.sampleRate = 8000;
-      om.audioCodec.codec = AUDIO_CODEC_PCM_U8;
-      om.rtpAudioInfo.PT = PCMU_8000_PT;
-    } else if (audio_st->codec->codec_id == AV_CODEC_ID_OPUS) {
-      ELOG_DEBUG("OPUS");
-      om.audioCodec.sampleRate = 48000;
-      om.audioCodec.codec = AUDIO_CODEC_OPUS;
-      om.rtpAudioInfo.PT = OPUS_48000_PT;
+    if (audio_st) {
+      if (audio_st->codec->codec_id == AV_CODEC_ID_PCM_MULAW) {
+        ELOG_DEBUG("PCM U8");
+        om.audioCodec.sampleRate = 8000;
+        om.audioCodec.codec = AUDIO_CODEC_PCM_U8;
+        om.rtpAudioInfo.PT = PCMU_8000_PT;
+      } else if (audio_st->codec->codec_id == AV_CODEC_ID_OPUS) {
+        ELOG_DEBUG("OPUS");
+        om.audioCodec.sampleRate = 48000;
+        om.audioCodec.codec = AUDIO_CODEC_OPUS;
+        om.rtpAudioInfo.PT = OPUS_48000_PT;
+      }
     }
     op_.reset(new OutputProcessor());
     op_->init(om, this);
@@ -165,10 +165,11 @@ int ExternalInput::sendPLI() {
 }
 
 
-void ExternalInput::receiveRtpData(unsigned char*rtpdata, int len) {
-  if (videoSink_ != NULL) {
-    memcpy(sendVideoBuffer_, rtpdata, len);
-    videoSink_->deliverVideoData(sendVideoBuffer_, len);
+void ExternalInput::receiveRtpData(unsigned char* rtpdata, int len) {
+  if (video_sink_ != nullptr) {
+    std::shared_ptr<DataPacket> packet = std::make_shared<DataPacket>(0, reinterpret_cast<char*>(rtpdata),
+        len, VIDEO_PACKET);
+    video_sink_->deliverVideoData(packet);
   }
 }
 
@@ -214,7 +215,9 @@ void ExternalInput::receiveLoop() {
         lastAudioPts_ = avpacket_.pts;
         length = op_->packageAudio(avpacket_.data, avpacket_.size, decodedBuffer_.get(), avpacket_.pts);
         if (length > 0) {
-          audioSink_->deliverAudioData(reinterpret_cast<char*>(decodedBuffer_.get()), length);
+          std::shared_ptr<DataPacket> packet = std::make_shared<DataPacket>(0,
+              reinterpret_cast<char*>(decodedBuffer_.get()), length, AUDIO_PACKET);
+          audio_sink_->deliverAudioData(packet);
         }
       }
     }

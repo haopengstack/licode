@@ -10,9 +10,11 @@
 #ifndef ERIZO_SRC_ERIZO_PIPELINE_PIPELINE_H_
 #define ERIZO_SRC_ERIZO_PIPELINE_PIPELINE_H_
 
+#include <string>
 #include <vector>
 
 #include "pipeline/HandlerContext.h"
+#include "pipeline/ServiceContext.h"
 #include "./MediaDefinitions.h"
 
 namespace erizo {
@@ -84,6 +86,24 @@ class PipelineBase : public std::enable_shared_from_this<PipelineBase> {
   template <class H>
   typename ContextType<H>::type* getContext();
 
+  template <class S>
+  void addService(std::shared_ptr<S> service);
+
+  template <class S>
+  void addService(S&& service);
+
+  template <class S>
+  void addService(S* service);
+
+  template <class S>
+  void removeService();
+
+  template <class S>
+  typename ServiceContextType<S>::type* getServiceContext();
+
+  template <class S>
+  std::shared_ptr<S> getService();
+
   // If one of the handlers owns the pipeline itself, use setOwner to ensure
   // that the pipeline doesn't try to detach the handler during destruction,
   // lest destruction ordering issues occur.
@@ -103,11 +123,13 @@ class PipelineBase : public std::enable_shared_from_this<PipelineBase> {
   std::vector<PipelineContext*> inCtxs_;
   std::vector<PipelineContext*> outCtxs_;
 
+  std::vector<std::shared_ptr<PipelineServiceContext>> service_ctxs_;
+
  private:
   PipelineManager* manager_{nullptr};
 
   template <class Context>
-  PipelineBase& addHelper(std::shared_ptr<Context>&& ctx, bool front);
+  PipelineBase& addHelper(std::shared_ptr<Context>&& ctx, bool front);  // NOLINT
 
   template <class H>
   PipelineBase& removeHelper(H* handler, bool checkEqual);
@@ -138,7 +160,7 @@ class Pipeline : public PipelineBase {
 
   ~Pipeline();
 
-  void read(std::shared_ptr<dataPacket> packet);
+  void read(std::shared_ptr<DataPacket> packet);
 
   void readEOF();
 
@@ -146,11 +168,16 @@ class Pipeline : public PipelineBase {
 
   void transportInactive();
 
-  void write(std::shared_ptr<dataPacket> packet);
+  void write(std::shared_ptr<DataPacket> packet);
 
   void close();
 
   void finalize() override;
+
+  void notifyUpdate();
+  void notifyEvent(MediaEventPtr event);
+  void enable(std::string name);
+  void disable(std::string name);
 
  protected:
   Pipeline();

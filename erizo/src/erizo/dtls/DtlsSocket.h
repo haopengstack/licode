@@ -2,11 +2,7 @@
 #define ERIZO_SRC_ERIZO_DTLS_DTLSSOCKET_H_
 
 extern "C" {
-  #ifdef WIN32
-  #include <srtp.h>
-  #else
-  #include <srtp/srtp.h>
-  #endif
+  #include <srtp2/srtp.h>
 }
 
 #include <openssl/e_os2.h>
@@ -22,19 +18,13 @@ extern "C" {
 #include <string>
 
 #include "../logger.h"
-#ifdef HAVE_CONFIG_H
-#include "./config.h"
-#endif
-
 
 const int SRTP_MASTER_KEY_KEY_LEN = 16;
 const int SRTP_MASTER_KEY_SALT_LEN = 14;
+static const int DTLS_MTU = 1472;
 
 namespace dtls {
 class DtlsSocketContext;
-class DtlsTimer;
-class DtlsSocketTimer;
-class DtlsTimerContext;
 
 class SrtpSessionKeys {
  public:
@@ -82,11 +72,10 @@ class DtlsSocket {
   DtlsSocket(DtlsSocketContext* socketContext, enum SocketType type);
   ~DtlsSocket();
 
+  void close();
+
   // Inspects packet to see if it's a DTLS packet, if so continue processing
   bool handlePacketMaybe(const unsigned char* bytes, unsigned int len);
-
-  // Called by DtlSocketTimer when timer expires - causes a retransmission (forceRetransmit)
-  void expired(DtlsSocketTimer* timer);
 
   // Retrieves the finger print of the certificate presented by the remote party
   bool getRemoteFingerprint(char *fingerprint);
@@ -114,6 +103,8 @@ class DtlsSocket {
   // extracted from the DTLS handshake process
   void createSrtpSessionPolicies(srtp_policy_t& outboundPolicy, srtp_policy_t& inboundPolicy);  // NOLINT
 
+  void handleTimeout();
+
  private:
   // Causes an immediate handshake iteration to happen, which will retransmit the handshake
   void forceRetransmit();
@@ -124,7 +115,6 @@ class DtlsSocket {
 
   // Internals
   DtlsSocketContext* mSocketContext;
-  DtlsTimer *mReadTimer;  // Timer used during handshake process
 
   // OpenSSL context data
   SSL *mSsl;
@@ -141,7 +131,7 @@ class DtlsReceiver {
   virtual void onDtlsPacket(DtlsSocketContext *ctx, const unsigned char* data, unsigned int len) = 0;
   virtual void onHandshakeCompleted(DtlsSocketContext *ctx, std::string clientKey, std::string serverKey,
                                     std::string srtp_profile) = 0;
-  virtual void onHandshakeFailed(DtlsSocketContext *ctx, const std::string error) = 0;
+  virtual void onHandshakeFailed(DtlsSocketContext *ctx, const std::string& error) = 0;
 };
 
 class DtlsSocketContext {
@@ -154,7 +144,7 @@ class DtlsSocketContext {
   DtlsSocketContext();
   virtual ~DtlsSocketContext();
 
-
+  void close();
 
   void start();
   void read(const unsigned char* data, unsigned int len);
@@ -163,8 +153,9 @@ class DtlsSocketContext {
   void handshakeFailed(const char *err);
   void setDtlsReceiver(DtlsReceiver *recv);
   void setDtlsSocket(DtlsSocket *sock) {mSocket = sock;}
-  void addTimerToContext(DtlsTimer* timer, int timeValue);
-  std::string getFingerprint();
+  std::string getFingerprint() const;
+
+  void handleTimeout();
 
   enum PacketType { rtp, dtls, stun, unknown};
 
@@ -200,7 +191,6 @@ class DtlsSocketContext {
  protected:
   DtlsSocket *mSocket;
   DtlsReceiver *receiver;
-  std::auto_ptr<DtlsTimerContext> mTimerContext;
 
  private:
   // Creates a DTLS SSL Context and enables srtp extension, also sets the private and public key cert

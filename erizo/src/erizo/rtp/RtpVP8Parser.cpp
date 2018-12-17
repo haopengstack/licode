@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace erizo {
@@ -102,7 +103,7 @@ int ParseVP8TIDAndKeyIdx(erizo::RTPPayloadVP8* vp8,
 int ParseVP8FrameSize(erizo::RTPPayloadVP8* vp8,
     const unsigned char* dataPtr,
     int dataLength) {
-  if (vp8->frameType != kIFrame) {
+  if (vp8->frameType != kVP8IFrame) {
     // Included in payload header for I-frames.
     return -1;
   }
@@ -155,6 +156,195 @@ int ParseVP8Extension(erizo::RTPPayloadVP8* vp8, const unsigned char* dataPtr, i
   return parsedBytes;
 }
 
+void RtpVP8Parser::setVP8PictureID(unsigned char* data, int data_length, int picture_id) {
+  unsigned char* data_ptr = data;
+
+  bool extension = (*data_ptr & 0x80) ? true : false;  // X bit
+
+  data_ptr++;
+  data_length--;
+
+  if (extension) {
+    if (data_length <= 0) {
+      return;
+    }
+    bool has_picture_id = (*data_ptr & 0x80) ? true : false;  // I bit
+    data_ptr++;
+    data_length--;
+
+    if (has_picture_id) {
+      if (data_length <= 0) {
+        return;
+      }
+      const uint16_t pic_id = static_cast<uint16_t> (picture_id);
+      int picture_id_len = (*data_ptr & 0x80) ? 2 : 1;
+      if (picture_id_len > data_length) return;
+      if (picture_id_len == 2) {
+        data_ptr[0] = 0x80 | ((pic_id >> 8) & 0x7F);
+        data_ptr[1] = pic_id & 0xFF;
+      } else if (picture_id_len == 1) {
+        data_ptr[0] = pic_id & 0x7F;
+      }
+    }
+  }
+}
+
+void RtpVP8Parser::setVP8TL0PicIdx(unsigned char* data, int data_length, uint8_t tl0_pic_idx) {
+  unsigned char* data_ptr = data;
+
+  bool extension = (*data_ptr & 0x80) ? true : false;  // X bit
+
+  data_ptr++;
+  data_length--;
+
+  if (extension) {
+    if (data_length <= 0) {
+      return;
+    }
+    bool has_picture_id = (*data_ptr & 0x80) ? true : false;  // I bit
+    bool has_tl0_pic_idx = (*data_ptr & 0x40) ? true : false;  // L bit
+    data_ptr++;
+    data_length--;
+
+    if (has_picture_id) {
+      if (data_length <= 0) {
+        return;
+      }
+      int picture_id_len = (*data_ptr & 0x80) ? 2 : 1;
+      data_ptr += picture_id_len;
+      data_length -= picture_id_len;
+    }
+
+    if (has_tl0_pic_idx) {
+      if (data_length <= 0) {
+        return;
+      }
+      data_ptr[0] = tl0_pic_idx;
+    }
+  }
+}
+
+int RtpVP8Parser::removePictureID(unsigned char* data, int data_length) {
+  unsigned char* data_ptr = data;
+  int previous_data_length = data_length;
+
+  bool extension = (*data_ptr & 0x80) ? true : false;  // X bit
+
+  data_ptr++;
+  data_length--;
+
+  if (extension) {
+    if (data_length <= 0) {
+      return previous_data_length;
+    }
+    bool has_picture_id = (*data_ptr & 0x80) ? true : false;  // I bit
+    data_ptr[0] = *data_ptr & 0x7F;  // unset I bit
+    data_ptr++;
+    data_length--;
+
+    if (has_picture_id) {
+      if (data_length <= 0) {
+        return previous_data_length;
+      }
+      int picture_id_len = (*data_ptr & 0x80) ? 2 : 1;
+      if (picture_id_len > data_length) return previous_data_length;
+      memmove(data_ptr, data_ptr + picture_id_len, data_length - picture_id_len);
+      previous_data_length -= picture_id_len;
+    }
+  }
+
+  return previous_data_length;
+}
+
+int RtpVP8Parser::removeTl0PicIdx(unsigned char* data, int data_length) {
+  unsigned char* data_ptr = data;
+  int previous_data_length = data_length;
+
+  bool extension = (*data_ptr & 0x80) ? true : false;  // X bit
+
+  data_ptr++;
+  data_length--;
+
+  if (extension) {
+    if (data_length <= 0) {
+      return previous_data_length;
+    }
+    bool has_picture_id = (*data_ptr & 0x80) ? true : false;  // I bit
+    bool has_tl0_pic_idx = (*data_ptr & 0x40) ? true : false;  // L bit
+    data_ptr[0] = *data_ptr & 0xBF;  // unset L bit
+    data_ptr++;
+    data_length--;
+
+    if (has_picture_id) {
+      if (data_length <= 0) {
+        return previous_data_length;
+      }
+      int picture_id_len = (*data_ptr & 0x80) ? 2 : 1;
+      data_ptr += picture_id_len;
+      data_length -= picture_id_len;
+    }
+
+    if (has_tl0_pic_idx) {
+      if (data_length <= 0) {
+        return previous_data_length;
+      }
+      memmove(data_ptr, data_ptr + 1, data_length - 1);
+      previous_data_length--;
+    }
+  }
+  return previous_data_length;
+}
+
+int RtpVP8Parser::removeTIDAndKeyIdx(unsigned char* data, int data_length) {
+  unsigned char* data_ptr = data;
+  int previous_data_length = data_length;
+
+  bool extension = (*data_ptr & 0x80) ? true : false;  // X bit
+
+  data_ptr++;
+  data_length--;
+
+  if (extension) {
+    if (data_length <= 0) {
+      return previous_data_length;
+    }
+    bool has_picture_id = (*data_ptr & 0x80) ? true : false;  // I bit
+    bool has_tl0_pic_idx = (*data_ptr & 0x40) ? true : false;  // L bit
+    bool has_tid = (*data_ptr & 0x20) ? true : false;  // T bit
+    bool has_key_idx = (*data_ptr & 0x10) ? true : false;  // K bit
+    data_ptr[0] = *data_ptr & 0xDF;  // unset T bit
+    data_ptr[0] = *data_ptr & 0xEF;  // unset T bit
+    data_ptr++;
+    data_length--;
+
+    if (has_picture_id) {
+      if (data_length <= 0) {
+        return previous_data_length;
+      }
+      int picture_id_len = (*data_ptr & 0x80) ? 2 : 1;
+      data_ptr += picture_id_len;
+      data_length -= picture_id_len;
+    }
+
+    if (has_tl0_pic_idx) {
+      if (data_length <= 0) {
+        return previous_data_length;
+      }
+      data_ptr++;
+      data_length--;
+    }
+
+    if (has_tid || has_key_idx) {
+      if (data_length <= 0) {
+        return previous_data_length;
+      }
+      memmove(data_ptr, data_ptr + 1, data_length - 1);
+      previous_data_length--;
+    }
+  }
+  return previous_data_length;
+}
+
 RTPPayloadVP8* RtpVP8Parser::parseVP8(unsigned char* data, int dataLength) {
   // ELOG_DEBUG("Parsing VP8 %d bytes", dataLength);
   RTPPayloadVP8* vp8 = new RTPPayloadVP8;  // = &parsedPacket.info.VP8;
@@ -195,10 +385,10 @@ RTPPayloadVP8* RtpVP8Parser::parseVP8(unsigned char* data, int dataLength) {
 
   // Read P bit from payload header (only at beginning of first partition)
   if (dataLength > 0 && vp8->beginningOfPartition && vp8->partitionID == 0) {
-    // parsedPacket.frameType = (*dataPtr & 0x01) ? kPFrame : kIFrame;
-    vp8->frameType = (*dataPtr & 0x01) ? kPFrame : kIFrame;
+    // parsedPacket.frameType = (*dataPtr & 0x01) ? kVP8PFrame : kVP8IFrame;
+    vp8->frameType = (*dataPtr & 0x01) ? kVP8PFrame : kVP8IFrame;
   } else {
-    vp8->frameType = kPFrame;
+    vp8->frameType = kVP8PFrame;
   }
   if (0 == ParseVP8FrameSize(vp8, dataPtr, dataLength)) {
     if (vp8->frameWidth != 640) {

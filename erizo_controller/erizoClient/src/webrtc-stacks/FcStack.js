@@ -1,48 +1,47 @@
-/*global console*/
-'use strict';
-var Erizo = Erizo || {};
+import Logger from '../utils/Logger';
 
-Erizo.FcStack = function (spec) {
-/*
-        spec.callback({
-            type: sessionDescription.type,
-            sdp: sessionDescription.sdp
-        });
-*/
-    var that = {};
+const FcStack = (spec) => {
+  /*
+  spec.callback({
+      type: sessionDescription.type,
+      sdp: sessionDescription.sdp
+  });
+  */
+  const that = {};
 
-    that.pcConfig = {};
+  that.pcConfig = {};
 
-    that.peerConnection = {};
-    that.desc = {};
-    that.signalCallback = undefined;
+  that.peerConnection = {};
+  that.desc = {};
+  that.signalCallback = undefined;
 
-    that.close = function() {
-        console.log('Close FcStack');
-    };
+  that.close = () => {
+    Logger.info('Close FcStack');
+  };
 
-    that.createOffer = function() {
-        console.log('FCSTACK: CreateOffer');
-    };
+  that.createOffer = () => {
+    Logger.debug('FCSTACK: CreateOffer');
+  };
 
-    that.addStream = function(stream) {
-        console.log('FCSTACK: addStream', stream);
-    };
+  that.addStream = (stream) => {
+    Logger.debug('FCSTACK: addStream', stream);
+  };
 
-    that.processSignalingMessage = function(msg) {
-        console.log('FCSTACK: processSignaling', msg);
-        if(that.signalCallback !== undefined)
-            that.signalCallback(msg);
-    };
+  that.processSignalingMessage = (msg) => {
+    Logger.debug('FCSTACK: processSignaling', msg);
+    if (that.signalCallback !== undefined) { that.signalCallback(msg); }
+  };
 
-    that.sendSignalingMessage = function(msg) {
-        console.log('FCSTACK: Sending signaling Message', msg);
-        spec.callback(msg);
-    };
+  that.sendSignalingMessage = (msg) => {
+    Logger.debug('FCSTACK: Sending signaling Message', msg);
+    spec.callback(msg);
+  };
 
-    that.setSignalingCallback = function(callback) {
-        console.log('FCSTACK: Setting signalling callback');
-        that.signalCallback = callback;
-    };
-    return that;
+  that.setSignalingCallback = (callback = () => {}) => {
+    Logger.debug('FCSTACK: Setting signalling callback');
+    that.signalCallback = callback;
+  };
+  return that;
 };
+
+export default FcStack;

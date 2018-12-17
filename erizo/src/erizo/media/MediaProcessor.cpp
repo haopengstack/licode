@@ -10,6 +10,8 @@ extern "C" {
 #include "rtp/RtpVP8Fragmenter.h"
 #include "rtp/RtpHeaders.h"
 #include "media/codecs/VideoCodec.h"
+#include "lib/Clock.h"
+#include "lib/ClockUtils.h"
 
 using std::memcpy;
 
@@ -68,10 +70,11 @@ int InputProcessor::init(const MediaInfo& info, RawDataReceiver* receiver) {
   return 0;
 }
 
-int InputProcessor::deliverAudioData_(char* buf, int len) {
+int InputProcessor::deliverAudioData_(std::shared_ptr<DataPacket> audio_packet) {
   if (audioDecoder && audioUnpackager) {
+    std::shared_ptr<DataPacket> copied_packet = std::make_shared<DataPacket>(*audio_packet);
     ELOG_DEBUG("Decoding audio");
-    int unp = unpackageAudio((unsigned char*) buf, len,
+    int unp = unpackageAudio((unsigned char*) copied_packet->data, copied_packet->length,
         unpackagedAudioBuffer_);
     int a = decodeAudio(unpackagedAudioBuffer_, unp, decodedAudioBuffer_);
     ELOG_DEBUG("DECODED AUDIO a %d", a);
@@ -84,9 +87,11 @@ int InputProcessor::deliverAudioData_(char* buf, int len) {
   }
   return 0;
 }
-int InputProcessor::deliverVideoData_(char* buf, int len) {
+int InputProcessor::deliverVideoData_(std::shared_ptr<DataPacket> video_packet) {
   if (videoUnpackager && videoDecoder) {
-    int ret = unpackageVideo(reinterpret_cast<unsigned char*>(buf), len, unpackagedBufferPtr_, &gotUnpackagedFrame_);
+    std::shared_ptr<DataPacket> copied_packet = std::make_shared<DataPacket>(*video_packet);
+    int ret = unpackageVideo(reinterpret_cast<unsigned char*>(copied_packet->data), copied_packet->length,
+        unpackagedBufferPtr_, &gotUnpackagedFrame_);
     if (ret < 0)
       return 0;
     upackagedSize_ += ret;
@@ -118,6 +123,10 @@ int InputProcessor::deliverVideoData_(char* buf, int len) {
       return c;
     }
   }
+  return 0;
+}
+
+int InputProcessor::deliverEvent_(MediaEventPtr event) {
   return 0;
 }
 
@@ -164,7 +173,7 @@ int InputProcessor::decodeAudio(unsigned char* inBuff, int inBuffLen, unsigned c
   }
 
   AVPacket avpkt;
-  int outSize;
+  int outSize = 0;
   int decSize = 0;
   int len = -1;
   uint8_t *decBuff = reinterpret_cast<uint8_t*>(malloc(16000));
@@ -437,9 +446,7 @@ int OutputProcessor::packageAudio(unsigned char* inBuff, int inBuffLen, unsigned
     return -1;
   }
 
-  // timeval time;
-  // gettimeofday(&time, NULL);
-  // long millis = (time.tv_sec * 1000) + (time.tv_usec / 1000);
+  // uint64_t millis = ClockUtils::timePointToMs(clock::now());
 
   RtpHeader head;
   head.setSeqNumber(audioSeqnum_++);
@@ -474,12 +481,10 @@ int OutputProcessor::packageVideo(unsigned char* inBuff, int buffSize, unsigned 
   if (buffSize <= 0) {
     return -1;
   }
-  RtpVP8Fragmenter frag(inBuff, buffSize, 1100);
+  RtpVP8Fragmenter frag(inBuff, buffSize);
   bool lastFrame = false;
   unsigned int outlen = 0;
-  timeval time;
-  gettimeofday(&time, NULL);
-  long millis = (time.tv_sec * 1000) + (time.tv_usec / 1000);  // NOLINT
+  uint64_t millis = ClockUtils::timePointToMs(clock::now());
   // timestamp_ += 90000 / mediaInfo.videoCodec.frameRate;
   // int64_t pts = av_rescale(lastPts_, 1000000, (long int)video_time_base_);
 

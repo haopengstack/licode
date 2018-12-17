@@ -7,7 +7,7 @@
 #include <cstring>
 
 #include "media/OneToManyTranscoder.h"
-#include "./WebRtcConnection.h"
+#include "./MediaStream.h"
 #include "rtp/RtpHeaders.h"
 
 using std::memcpy;
@@ -53,33 +53,35 @@ OneToManyTranscoder::~OneToManyTranscoder() {
   delete op_; op_ = NULL;
 }
 
-int OneToManyTranscoder::deliverAudioData_(char* buf, int len) {
-  if (subscribers.empty() || len <= 0)
+int OneToManyTranscoder::deliverAudioData_(std::shared_ptr<DataPacket> audio_packet) {
+  if (subscribers.empty() || audio_packet->length <= 0)
   return 0;
 
   std::map<std::string, MediaSink*>::iterator it;
   for (it = subscribers.begin(); it != subscribers.end(); it++) {
-    memcpy(sendAudioBuffer_, buf, len);
-    (*it).second->deliverAudioData(sendAudioBuffer_, len);
+    (*it).second->deliverAudioData(audio_packet);
   }
 
   return 0;
 }
 
-int OneToManyTranscoder::deliverVideoData_(char* buf, int len) {
-  memcpy(sendVideoBuffer_, buf, len);
-
-  RtpHeader* theHead = reinterpret_cast<RtpHeader*>(buf);
+int OneToManyTranscoder::deliverVideoData_(std::shared_ptr<DataPacket> video_packet) {
+  RtpHeader* theHead = reinterpret_cast<RtpHeader*>(video_packet->data);
   // ELOG_DEBUG("extension %d pt %u", theHead->getExtension(),
   // theHead->getPayloadType());
 
   if (theHead->getPayloadType() == 100) {
-    ip_->deliverVideoData(sendVideoBuffer_, len);
+    ip_->deliverVideoData(video_packet);
   } else {
-    this->receiveRtpData((unsigned char*) buf, len);
+    memcpy(sendVideoBuffer_, video_packet->data, video_packet->length);
+    this->receiveRtpData((unsigned char*) sendVideoBuffer_, video_packet->length);
   }
 
   sentPackets_++;
+  return 0;
+}
+
+int OneToManyTranscoder::deliverEvent_(MediaEventPtr event) {
   return 0;
 }
 
@@ -89,14 +91,13 @@ void OneToManyTranscoder::receiveRawData(const RawDataPacket& pkt) {
 }
 
 void OneToManyTranscoder::receiveRtpData(unsigned char*rtpdata, int len) {
-  ELOG_DEBUG("Received rtp data %d", len);
-  memcpy(sendVideoBuffer_, rtpdata, len);
-
   if (subscribers.empty() || len <= 0)
   return;
   std::map<std::string, MediaSink*>::iterator it;
+  std::shared_ptr<DataPacket> data_packet = std::make_shared<DataPacket>(0,
+      reinterpret_cast<char*>(rtpdata), len, VIDEO_PACKET);
   for (it = subscribers.begin(); it != subscribers.end(); it++) {
-    (*it).second->deliverVideoData(sendVideoBuffer_, len);
+    (*it).second->deliverVideoData(data_packet);
   }
   sentPackets_++;
 }

@@ -4,12 +4,17 @@
 #include <boost/scoped_ptr.hpp>
 #include <boost/thread.hpp>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/time.h>
 }
+
+#pragma GCC diagnostic pop
 
 #include <string>
 #include <map>
@@ -21,7 +26,6 @@ extern "C" {
 #include "./logger.h"
 
 namespace erizo {
-class WebRtcConnection;
 
 class ExternalInput : public MediaSource, public RTPDataReceiver {
   DECLARE_LOGGER();
@@ -30,14 +34,15 @@ class ExternalInput : public MediaSource, public RTPDataReceiver {
   explicit ExternalInput(const std::string& inputUrl);
   virtual ~ExternalInput();
   int init();
-  void receiveRtpData(unsigned char* rtpdata, int len);
-  int sendPLI();
+  void receiveRtpData(unsigned char* rtpdata, int len) override;
+  int sendPLI() override;
+
+  void close() override {}
 
  private:
   boost::scoped_ptr<OutputProcessor> op_;
   VideoDecoder inCodec_;
   boost::scoped_array<unsigned char> decodedBuffer_;
-  char sendVideoBuffer_[2000];
 
   std::string url_;
   bool running_;
@@ -59,4 +64,5 @@ class ExternalInput : public MediaSource, public RTPDataReceiver {
   void encodeLoop();
 };
 }  // namespace erizo
+
 #endif  // ERIZO_SRC_ERIZO_MEDIA_EXTERNALINPUT_H_

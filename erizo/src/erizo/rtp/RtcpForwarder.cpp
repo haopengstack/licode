@@ -6,13 +6,16 @@
 #include <string>
 #include <cstring>
 
+#include "lib/Clock.h"
+#include "lib/ClockUtils.h"
+
 using std::memcpy;
 
 namespace erizo {
 DEFINE_LOGGER(RtcpForwarder, "rtp.RtcpForwarder");
 
-RtcpForwarder::RtcpForwarder(MediaSink* msink, MediaSource* msource, uint32_t maxVideoBw)
-  : RtcpProcessor(msink, msource, maxVideoBw), defaultVideoBw_(maxVideoBw / 2) {
+RtcpForwarder::RtcpForwarder(MediaSink* msink, MediaSource* msource, uint32_t max_video_bw)
+  : RtcpProcessor(msink, msource, max_video_bw) {
     ELOG_DEBUG("Starting RtcpForwarder");
   }
 
@@ -30,10 +33,6 @@ void RtcpForwarder::addSourceSsrc(uint32_t ssrc) {
   }
 }
 
-void RtcpForwarder::setMaxVideoBW(uint32_t bandwidth) {
-  this->maxVideoBw_ = bandwidth;
-}
-
 void RtcpForwarder::setPublisherBW(uint32_t bandwidth) {
 }
 
@@ -45,12 +44,11 @@ void RtcpForwarder::analyzeSr(RtcpHeader* chead) {
   boost::mutex::scoped_lock mlock(mapLock_);
   boost::shared_ptr<RtcpData> theData = rtcpData_[recvSSRC];
   boost::mutex::scoped_lock lock(theData->dataLock);
-  struct timeval now;
-  gettimeofday(&now, NULL);
+  uint64_t now = ClockUtils::timePointToMs(clock::now());
   uint32_t ntp;
   uint64_t theNTP = chead->getNtpTimestamp();
   ntp = (theNTP & (0xFFFFFFFF0000)) >> 16;
-  theData->senderReports.push_back(boost::shared_ptr<SrData>( new SrData(ntp, now)));
+  theData->senderReports.push_back(boost::shared_ptr<SrDelayData>( new SrDelayData(ntp, now)));
   // We only store the last 20 sr
   if (theData->senderReports.size() > 20) {
     theData->senderReports.pop_front();
@@ -67,8 +65,6 @@ int RtcpForwarder::analyzeFeedback(char *buf, int len) {
     // We try to add it just in case it is not there yet (otherwise its noop)
     this->addSourceSsrc(sourceSsrc);
 
-    struct timeval now;
-    gettimeofday(&now, NULL);
     char* movingBuf = buf;
     int rtcpLength = 0;
     int totalLength = 0;
@@ -84,10 +80,11 @@ int RtcpForwarder::analyzeFeedback(char *buf, int len) {
           ELOG_DEBUG("SDES");
           break;
         case RTCP_BYE:
-          ELOG_DEBUG("BYE");
+          ELOG_DEBUG("Dropping BYE packet");
+          return 0;
           break;
         case RTCP_Receiver_PT:
-          if (chead->getSourceSSRC() == rtcpSource_->getVideoSourceSSRC()) {
+          if (rtcpSource_->isVideoSourceSSRC(chead->getSourceSSRC())) {
             ELOG_DEBUG("Analyzing Video RR: PacketLost %u, Ratio %u, currentBlock %d, blocks %d"
                        ", sourceSSRC %u, ssrc %u changed to %u",
                 chead->getLostPackets(),
@@ -135,13 +132,14 @@ int RtcpForwarder::analyzeFeedback(char *buf, int len) {
                 if (!strncmp(uniqueId, "REMB", 4)) {
                   uint64_t bitrate = chead->getBrMantis() << chead->getBrExp();
                   uint64_t cappedBitrate = 0;
-                  cappedBitrate = bitrate < maxVideoBw_? bitrate: maxVideoBw_;
-                  if (bitrate < maxVideoBw_) {
+                  cappedBitrate = bitrate < max_video_bw_? bitrate: max_video_bw_;
+                  if (bitrate < max_video_bw_) {
                     cappedBitrate = bitrate;
                   } else {
-                    cappedBitrate = maxVideoBw_;
+                    cappedBitrate = max_video_bw_;
                   }
-                  ELOG_DEBUG("Received REMB %lu, partnum %u, cappedBitrate %lu", bitrate, currentBlock, cappedBitrate);
+                  ELOG_DEBUG("Received REMB %lu, partnum %u, cappedBitrate %lu",
+                              bitrate, currentBlock, cappedBitrate);
                   chead->setREMBBitRate(cappedBitrate);
                 } else {
                   ELOG_WARN("Unsupported AFB Packet not REMB")
@@ -164,7 +162,6 @@ int RtcpForwarder::analyzeFeedback(char *buf, int len) {
   return 0;
 }
 
-
 void RtcpForwarder::checkRtcpFb() {
 }
 
@@ -180,7 +177,7 @@ int RtcpForwarder::addREMB(char* buf, int len, uint32_t bitrate) {
   theREMB.setLength(5);
   theREMB.setREMBBitRate(bitrate);
   theREMB.setREMBNumSSRC(1);
-  theREMB.setREMBFeedSSRC(rtcpSource_->getVideoSourceSSRC());
+  theREMB.setREMBFeedSSRC(0, rtcpSource_->getVideoSourceSSRC());
   int rembLength = (theREMB.getLength()+1)*4;
 
   memcpy(buf, reinterpret_cast<uint8_t*>(&theREMB), rembLength);

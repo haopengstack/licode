@@ -27,7 +27,7 @@ TEST(erizoPacket, rtpPacketQueueBasicBehavior) {
     ASSERT_EQ(queue.hasData(), false);
 
     // If we try to pop this packet, we should get back a null shared_ptr object.
-    boost::shared_ptr<erizo::dataPacket> packet = queue.popPacket();
+    boost::shared_ptr<erizo::DataPacket> packet = queue.popPacket();
     ASSERT_THAT(packet.get(), IsNull());
     ASSERT_EQ(queue.getSize(), 1);
     ASSERT_EQ(queue.hasData(), false);
@@ -53,7 +53,7 @@ TEST(erizoPacket, rtpPacketQueueCorrectlyReordersSamples) {
 
     for (int x = 1; x <=10; x++) {
         // override our default pop behavior so we can validate these are ordered
-        boost::shared_ptr<erizo::dataPacket> packet = queue.popPacket(true);
+        boost::shared_ptr<erizo::DataPacket> packet = queue.popPacket(true);
         const erizo::RtpHeader *poppedHeader = reinterpret_cast<const erizo::RtpHeader*>(packet->data);
         ASSERT_EQ(poppedHeader->getSeqNumber(), x);
     }
@@ -74,7 +74,7 @@ TEST(erizoPacket, rtpPacketQueueCorrectlyHandlesSequenceNumberRollover) {
     x = 65530;
     while (x != 5) {
         // override our default pop behavior so we can validate these are ordered
-        boost::shared_ptr<erizo::dataPacket> packet = queue.popPacket(true);
+        boost::shared_ptr<erizo::DataPacket> packet = queue.popPacket(true);
         const erizo::RtpHeader *poppedHeader = reinterpret_cast<const erizo::RtpHeader*>(packet->data);
         ASSERT_EQ(poppedHeader->getSeqNumber(), x);
         x += 1;
@@ -97,7 +97,7 @@ TEST(erizoPacket, rtpPacketQueueCorrectlyHandlesSequenceNumberRolloverBackwards)
     x = 65530;
     while (x != 5) {
         // override our default pop behavior so we can validate these are ordered
-        boost::shared_ptr<erizo::dataPacket> packet = queue.popPacket(true);
+        boost::shared_ptr<erizo::DataPacket> packet = queue.popPacket(true);
         const erizo::RtpHeader *poppedHeader = reinterpret_cast<const erizo::RtpHeader*>(packet->data);
         ASSERT_EQ(poppedHeader->getSeqNumber(), x);
         x += 1;
@@ -132,7 +132,7 @@ TEST(erizoPacket, rtpPacketQueueDoesNotPushSampleLessThanWhatHasBeenPopped) {
 }
 
 TEST(erizoPacket, rtpPacketQueueMakesDataAvailableOnceEnoughSamplesPushed) {
-    unsigned int max = 10, depth = 5;
+    int max = 10, depth = 5;
     erizo::RtpPacketQueue queue(depth, max);  // max and depth.
     queue.setTimebase(1);
 
@@ -160,10 +160,9 @@ TEST(erizoPacket, rtpPacketQueueMakesDataAvailableOnceEnoughSamplesPushed) {
 }
 
 TEST(erizoPacket, rtpPacketQueueRespectsMax) {
-    unsigned int max = 10, depth = 5;
+    int max = 10, depth = 5;
     erizo::RtpPacketQueue queue(depth, max);  // max and depth.
     queue.setTimebase(1);   // dummy timebase.
-    uint16_t x = 0;
 
     // let's push ten times the max.
     for (uint16_t x = 0; x < (max * 10); x++) {
@@ -202,7 +201,7 @@ TEST(erizoPacket, depthCalculationHandlesTimestampWrap) {
     // In the RTP spec, timestamps for a packet are 32 bit unsigned,
     // and can overflow (very possible given that the starting
     // point is random.  Test that our depth works correctly
-    unsigned int max = 10, depth = 5;
+    int max = 10, depth = 5;
     erizo::RtpPacketQueue queue(depth, max);  // max and depth.
     queue.setTimebase(1);   // dummy timebase.
 

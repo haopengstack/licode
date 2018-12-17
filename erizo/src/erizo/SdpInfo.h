@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
 #include "./logger.h"
 
@@ -33,10 +34,21 @@ enum StreamDirection {
   SENDRECV, SENDONLY, RECVONLY
 };
 /**
+ * Simulcast rid direction
+ */
+enum RidDirection {
+  SEND, RECV
+};
+std::ostream& operator<<(std::ostream&, RidDirection);
+RidDirection reverse(RidDirection);
+/**
  * RTP Profile
  */
 enum Profile {
   AVPF, SAVPF
+};
+enum DtlsRole {
+  ACTPASS, ACTIVE, PASSIVE
 };
 /**
  * SRTP info.
@@ -86,6 +98,7 @@ class CandidateInfo {
     std::string username;
     std::string password;
     MediaType mediaType;
+    std::string sdp;
 };
 
 /**
@@ -103,13 +116,13 @@ class BundleTag {
  * A PT to Codec map
  */
 struct RtpMap {
-  unsigned int payloadType;
-  std::string encodingName;
-  unsigned int clockRate;
-  MediaType mediaType;
+  unsigned int payload_type;
+  std::string encoding_name;
+  unsigned int clock_rate;
+  MediaType media_type;
   unsigned int channels;
-  std::vector<std::string> feedbackTypes;
-  std::map<std::string, std::string> formatParameters;
+  std::vector<std::string> feedback_types;
+  std::map<std::string, std::string> format_parameters;
 };
 /**
  * A RTP extmap description
@@ -126,6 +139,16 @@ class ExtMap {
 };
 
 /**
+ * Simulcast rid structure
+ */
+struct Rid {
+  std::string id;
+  RidDirection direction;
+};
+
+bool operator==(const Rid&, const Rid&);
+
+/**
  * Contains the information of a single SDP.
  * Used to parse and generate SDPs
  */
@@ -136,7 +159,7 @@ class SdpInfo {
   /**
    * Constructor
    */
-  SdpInfo();
+  explicit SdpInfo(const std::vector<RtpMap> rtp_mappings);
   virtual ~SdpInfo();
   /**
    * Inits the object with a given SDP.
@@ -168,7 +191,8 @@ class SdpInfo {
   * Gets the payloadType information
   * @return A vector containing the PT-codec information
   */
-  const std::vector<RtpMap>& getPayloadInfos();
+  std::vector<RtpMap>& getPayloadInfos();
+  std::vector<ExtMap> getExtensionMap(MediaType media);
   /**
    * Gets the actual SDP.
    * @return The SDP in string format.
@@ -179,25 +203,27 @@ class SdpInfo {
    * @param externalPT The audio payload type as coming from this source
    * @return The internal payload id
    */
-  int getAudioInternalPT(int externalPT);
+  unsigned int getAudioInternalPT(unsigned int externalPT);
   /**
    * @brief map external payload type to an internal id
    * @param externalPT The video payload type as coming from this source
    * @return The internal payload id
    */
-  int getVideoInternalPT(int externalPT);
+  unsigned int getVideoInternalPT(unsigned int externalPT);
   /**
    * @brief map internal payload id to an external payload type
    * @param internalPT The payload type id used internally
    * @return The external payload type as provided to this source
    */
-  int getAudioExternalPT(int internalPT);
+  unsigned int getAudioExternalPT(unsigned int internalPT);
   /**
    * @brief map internal payload it to an external payload type
    * @param internalPT The payload id as used internally
    * @return The external video payload type
    */
-  int getVideoExternalPT(int internalPT);
+  unsigned int getVideoExternalPT(unsigned int internalPT);
+
+  RtpMap* getCodecByExternalPayloadType(const unsigned int payload_type);
 
   void setCredentials(const std::string& username, const std::string& password, MediaType media);
 
@@ -209,19 +235,31 @@ class SdpInfo {
 
   bool supportCodecByName(const std::string codecName, const unsigned int clockRate);
 
-  bool supportPayloadType(const int payloadType);
+  bool supportPayloadType(const unsigned int payloadType);
 
-  void createOfferSdp(bool videoEnabled, bool audioEnabled);
+  void createOfferSdp(bool videoEnabled, bool audioEnabled, bool bundle);
   /**
    * @brief copies relevant information from the offer sdp for which this will be an answer sdp
    * @param offerSdp The offer SDP as received via signaling and parsed
    */
-  void setOfferSdp(const SdpInfo& offerSdp);
+  void setOfferSdp(std::shared_ptr<SdpInfo> offerSdp);
+
+  void updateSupportedExtensionMap(const std::vector<ExtMap> &ext_map);
+  bool isValidExtension(std::string uri);
+
+  bool postProcessInfo();
+
+  /**
+  * @return A vector containing the simulcast RID informations
+  */
+  const std::vector<Rid>& rids() const { return rids_; }
 
   /**
    * The audio and video SSRCs for this particular SDP.
    */
-  unsigned int audioSsrc, videoSsrc, videoRtxSsrc;
+  std::map<std::string, unsigned int> audio_ssrc_map;
+  std::map<std::string, std::vector<uint32_t>> video_ssrc_map;
+  std::map<std::string, std::map<uint32_t, uint32_t>> video_rtx_ssrc_map;
   /**
   * Is it Bundle
   */
@@ -253,19 +291,25 @@ class SdpInfo {
   */
   std::string fingerprint;
   /**
+  * DTLS Role
+  */
+  DtlsRole dtlsRole;
+  /**
   * Mapping from internal PT (key) to external PT (value)
   */
-  std::map<int, int> inOutPTMap;
+  std::map<unsigned int, unsigned int> inOutPTMap;
   /**
   * Mapping from external PT (key) to intermal PT (value)
   */
-  std::map<int, int> outInPTMap;
+  std::map<unsigned int, unsigned int> outInPTMap;
   /**
    * The negotiated payload list
    */
   std::vector<RtpMap> payloadVector;
+
   std::vector<BundleTag> bundleTags;
   std::vector<ExtMap> extMapVector;
+
   /*
    * MLines for video and audio
    */
@@ -273,17 +317,22 @@ class SdpInfo {
   int audioSdpMLine;
   int videoCodecs, audioCodecs;
   unsigned int videoBandwidth;
-
- private:
-  bool processSdp(const std::string& sdp, const std::string& media);
-  bool processCandidate(const std::vector<std::string>& pieces, MediaType mediaType);
-  std::string stringifyCandidate(const CandidateInfo & candidate);
-  void gen_random(char* s, int len);
   std::vector<CandidateInfo> candidateVector_;
   std::vector<CryptoInfo> cryptoVector_;
   std::vector<RtpMap> internalPayloadVector_;
   std::string iceVideoUsername_, iceAudioUsername_;
   std::string iceVideoPassword_, iceAudioPassword_;
+  std::map<unsigned int, RtpMap> payload_parsed_map_;
+  std::vector<ExtMap> supported_ext_map_;
+  std::vector<Rid> rids_;
+  std::string google_conference_flag_set;
+
+ private:
+  bool processSdp(const std::string& sdp, const std::string& media);
+  bool processCandidate(const std::vector<std::string>& pieces, MediaType mediaType, std::string sdp);
+  std::string stringifyCandidate(const CandidateInfo & candidate);
+  void gen_random(char* s, int len);
+  void maybeAddSsrcToList(uint32_t ssrc);
 };
 }  // namespace erizo
 #endif  // ERIZO_SRC_ERIZO_SDPINFO_H_

@@ -11,6 +11,7 @@
 #include <pipeline/Pipeline.h>
 
 #include <cassert>
+#include <string>
 
 namespace erizo {
 
@@ -36,7 +37,7 @@ PipelineBase::ContextIterator PipelineBase::removeAt(
 
 PipelineBase& PipelineBase::removeFront() {
   if (ctxs_.empty()) {
-    throw std::invalid_argument("No handlers in pipeline");
+    return *this;
   }
   removeAt(ctxs_.begin());
   return *this;
@@ -44,7 +45,7 @@ PipelineBase& PipelineBase::removeFront() {
 
 PipelineBase& PipelineBase::removeBack() {
   if (ctxs_.empty()) {
-    throw std::invalid_argument("No handlers in pipeline");
+    return *this;
   }
   removeAt(--ctxs_.end());
   return *this;
@@ -64,30 +65,30 @@ Pipeline::~Pipeline() {
   detachHandlers();
 }
 
-void Pipeline::read(std::shared_ptr<dataPacket> packet) {
+void Pipeline::read(std::shared_ptr<DataPacket> packet) {
   if (!front_) {
-    throw std::invalid_argument("read(): no inbound handler in Pipeline");
+    return;
   }
-  front_->read(packet);
+  front_->read(std::move(packet));
 }
 
 void Pipeline::readEOF() {
   if (!front_) {
-    throw std::invalid_argument("readEOF(): no inbound handler in Pipeline");
+    return;
   }
   front_->readEOF();
 }
 
-void Pipeline::write(std::shared_ptr<dataPacket> packet) {
+void Pipeline::write(std::shared_ptr<DataPacket> packet) {
   if (!back_) {
-    throw std::invalid_argument("write(): no outbound handler in Pipeline");
+    return;
   }
-  back_->write(packet);
+  back_->write(std::move(packet));
 }
 
 void Pipeline::close() {
   if (!back_) {
-    throw std::invalid_argument("close(): no outbound handler in Pipeline");
+    return;
   }
   back_->close();
 }
@@ -124,6 +125,43 @@ void Pipeline::finalize() {
 
   for (auto it = ctxs_.rbegin(); it != ctxs_.rend(); it++) {
     (*it)->attachPipeline();
+  }
+
+  for (auto it = service_ctxs_.rbegin(); it != service_ctxs_.rend(); it++) {
+    (*it)->attachPipeline();
+  }
+
+  notifyUpdate();
+}
+
+void Pipeline::notifyUpdate() {
+  for (auto it = ctxs_.rbegin(); it != ctxs_.rend(); it++) {
+    (*it)->notifyUpdate();
+  }
+}
+
+void Pipeline::notifyEvent(MediaEventPtr event) {
+  for (auto it = ctxs_.rbegin(); it != ctxs_.rend(); it++) {
+    (*it)->notifyEvent(event);
+  }
+  for (auto it = service_ctxs_.rbegin(); it != service_ctxs_.rend(); it++) {
+    (*it)->notifyEvent(event);
+  }
+}
+
+void Pipeline::enable(std::string name) {
+  for (auto it = ctxs_.rbegin(); it != ctxs_.rend(); it++) {
+    if ((*it)->getName() == name) {
+      (*it)->enable();
+    }
+  }
+}
+
+void Pipeline::disable(std::string name) {
+  for (auto it = ctxs_.rbegin(); it != ctxs_.rend(); it++) {
+    if ((*it)->getName() == name) {
+      (*it)->disable();
+    }
   }
 }
 

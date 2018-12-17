@@ -1,4 +1,9 @@
-/*global console, CryptoJS, XMLHttpRequest*/
+/* global console, XMLHttpRequest */
+
+/* eslint-disable */
+
+var crypto = require('crypto');
+
 var N = N || {};
 
 N.API = (function (N) {
@@ -151,18 +156,9 @@ N.API = (function (N) {
                     case 205:
                         callback(req.responseText);
                         break;
-                    case 400:
-                        if (callbackError !== undefined) callbackError('400 Bad Request');
-                        break;
-                    case 401:
-                        if (callbackError !== undefined) callbackError('401 Unauthorized');
-                        break;
-                    case 403:
-                        if (callbackError !== undefined) callbackError('403 Forbidden');
-                        break;
                     default:
                         if (callbackError !== undefined) {
-                          callbackError(req.status + ' Error' + req.responseText);
+                          callbackError(req.status + ' Error' + req.responseText, req.status);
                         }
                 }
             }
@@ -182,11 +178,10 @@ N.API = (function (N) {
     };
 
     calculateSignature = function (toSign, key) {
-        var hash, hex, signed;
-        hash = CryptoJS.HmacSHA1(toSign, key);
-        hex = hash.toString(CryptoJS.enc.Hex);
-        signed = N.Base64.encodeBase64(hex);
-        return signed;
+      var hex = crypto.createHmac('sha1', key)
+        .update(toSign)
+        .digest('hex');
+      return Buffer.from(hex).toString('base64');
     };
 
     formatString = function(s){

@@ -11,6 +11,7 @@
 #define ERIZO_SRC_ERIZO_PIPELINE_HANDLER_H_
 
 #include <cassert>
+#include <string>
 
 #include "pipeline/Pipeline.h"
 #include "./MediaDefinitions.h"
@@ -46,7 +47,11 @@ class Handler : public HandlerBase<HandlerContext> {
   typedef HandlerContext Context;
   virtual ~Handler() = default;
 
-  virtual void read(Context* ctx, std::shared_ptr<dataPacket> packet) = 0;
+  virtual void enable() = 0;
+  virtual void disable() = 0;
+  virtual std::string getName() = 0;
+
+  virtual void read(Context* ctx, std::shared_ptr<DataPacket> packet) = 0;
   virtual void readEOF(Context* ctx) {
     ctx->fireReadEOF();
   }
@@ -57,9 +62,13 @@ class Handler : public HandlerBase<HandlerContext> {
     ctx->fireTransportInactive();
   }
 
-  virtual void write(Context* ctx, std::shared_ptr<dataPacket> packet) = 0;
+  virtual void write(Context* ctx, std::shared_ptr<DataPacket> packet) = 0;
   virtual void close(Context* ctx) {
     return ctx->fireClose();
+  }
+
+  virtual void notifyUpdate() = 0;
+  virtual void notifyEvent(MediaEventPtr event) {
   }
 };
 
@@ -70,7 +79,12 @@ class InboundHandler : public HandlerBase<InboundHandlerContext> {
   typedef InboundHandlerContext Context;
   virtual ~InboundHandler() = default;
 
-  virtual void read(Context* ctx, std::shared_ptr<dataPacket> packet) = 0;
+  virtual void enable() = 0;
+  virtual void disable() = 0;
+
+  virtual std::string getName() = 0;
+
+  virtual void read(Context* ctx, std::shared_ptr<DataPacket> packet) = 0;
   virtual void readEOF(Context* ctx) {
     ctx->fireReadEOF();
   }
@@ -80,6 +94,9 @@ class InboundHandler : public HandlerBase<InboundHandlerContext> {
   virtual void transportInactive(Context* ctx) {
     ctx->fireTransportInactive();
   }
+
+  virtual void notifyUpdate() = 0;
+  virtual void notifyEvent(MediaEventPtr event) {}
 };
 
 class OutboundHandler : public HandlerBase<OutboundHandlerContext> {
@@ -89,22 +106,46 @@ class OutboundHandler : public HandlerBase<OutboundHandlerContext> {
   typedef OutboundHandlerContext Context;
   virtual ~OutboundHandler() = default;
 
-  virtual void write(Context* ctx, std::shared_ptr<dataPacket> packet) = 0;
+  virtual void enable() = 0;
+  virtual void disable() = 0;
+
+  virtual std::string getName() = 0;
+
+  virtual void write(Context* ctx, std::shared_ptr<DataPacket> packet) = 0;
   virtual void close(Context* ctx) {
     return ctx->fireClose();
   }
+
+  virtual void notifyUpdate() = 0;
+  virtual void notifyEvent(MediaEventPtr event) {}
 };
 
 class HandlerAdapter : public Handler {
  public:
   typedef typename Handler::Context Context;
 
-  void read(Context* ctx, std::shared_ptr<dataPacket> packet) override {
-    ctx->fireRead(packet);
+  void enable() override {
   }
 
-  void write(Context* ctx, std::shared_ptr<dataPacket> packet) override {
-    return ctx->fireWrite(packet);
+  void disable() override {
+  }
+
+  std::string getName() override {
+    return "adapter";
+  }
+
+  void read(Context* ctx, std::shared_ptr<DataPacket> packet) override {
+    ctx->fireRead(std::move(packet));
+  }
+
+  void write(Context* ctx, std::shared_ptr<DataPacket> packet) override {
+    return ctx->fireWrite(std::move(packet));
+  }
+
+  void notifyUpdate() override {
+  }
+
+  void notifyEvent(MediaEventPtr event) override {
   }
 };
 }  // namespace erizo

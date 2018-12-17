@@ -9,10 +9,7 @@
 #include "./config.h"
 #endif
 
-#include "./DtlsTimer.h"
 #include "./bf_dwrap.h"
-
-const int SRTP_MASTER_KEY_BASE64_LEN = SRTP_MASTER_KEY_LEN * 4 / 3;
 
 using dtls::DtlsSocket;
 using dtls::SrtpSessionKeys;
@@ -20,26 +17,12 @@ using std::memcpy;
 
 DEFINE_LOGGER(DtlsSocket, "dtls.DtlsSocket");
 
-// Our local timers
-class dtls::DtlsSocketTimer : public DtlsTimer {
- public:
-  DtlsSocketTimer(unsigned int seq, DtlsSocket *socket): DtlsTimer(seq), mSocket(socket) {}
-  ~DtlsSocketTimer() {}
-
-  void expired() {
-    mSocket->expired(this);
-  }
- private:
-  DtlsSocket *mSocket;
-};
-
 int dummy_cb(int d, X509_STORE_CTX *x) {
   return 1;
 }
 
 DtlsSocket::DtlsSocket(DtlsSocketContext* socketContext, enum SocketType type):
               mSocketContext(socketContext),
-              mReadTimer(0),
               mSocketType(type),
               mHandshakeCompleted(false) {
   ELOG_DEBUG("Creating Dtls Socket");
@@ -48,6 +31,7 @@ DtlsSocket::DtlsSocket(DtlsSocketContext* socketContext, enum SocketType type):
   assert(mContext);
   mSsl = SSL_new(mContext);
   assert(mSsl != 0);
+  SSL_set_mtu(mSsl, DTLS_MTU);
   mSsl->ctx = mContext;
   mSsl->session_ctx = mContext;
 
@@ -78,10 +62,10 @@ DtlsSocket::DtlsSocket(DtlsSocketContext* socketContext, enum SocketType type):
 }
 
 DtlsSocket::~DtlsSocket() {
-  ELOG_DEBUG("Deleting Socket");
-  if (mReadTimer) mReadTimer->invalidate();
+  close();
+}
 
-  ELOG_DEBUG("Invalidated Timer");
+void DtlsSocket::close() {
   // Properly shutdown the socket and free it - note: this also free's the BIO's
   if (mSsl != NULL) {
     ELOG_DEBUG("SSL Shutdown");
@@ -91,24 +75,28 @@ DtlsSocket::~DtlsSocket() {
   }
 }
 
-void DtlsSocket::expired(DtlsSocketTimer* timer) {
-  forceRetransmit();
-}
-
 void DtlsSocket::startClient() {
   assert(mSocketType == Client);
   doHandshakeIteration();
 }
 
 bool DtlsSocket::handlePacketMaybe(const unsigned char* bytes, unsigned int len) {
+  if (mSsl == NULL) {
+    ELOG_WARN("handlePacketMaybe called after DtlsSocket closed: %p", this);
+    return false;
+  }
   DtlsSocketContext::PacketType pType = DtlsSocketContext::demuxPacket(bytes, len);
 
   if (pType != DtlsSocketContext::dtls) {
     return false;
   }
 
-  BIO_reset(mInBio);
-  BIO_reset(mOutBio);
+  if (mSsl == nullptr) {
+    return false;
+  }
+
+  (void) BIO_reset(mInBio);
+  (void) BIO_reset(mOutBio);
 
   int r = BIO_write(mInBio, bytes, len);
   assert(r == static_cast<int>(len));  // Can't happen
@@ -123,8 +111,8 @@ bool DtlsSocket::handlePacketMaybe(const unsigned char* bytes, unsigned int len)
 }
 
 void DtlsSocket::forceRetransmit() {
-  BIO_reset(mInBio);
-  BIO_reset(mOutBio);
+  (void) BIO_reset(mInBio);
+  (void) BIO_reset(mOutBio);
   BIO_ctrl(mInBio, BIO_CTRL_DGRAM_SET_RECV_TIMEOUT, 0, 0);
 
   doHandshakeIteration();
@@ -145,33 +133,18 @@ void DtlsSocket::doHandshakeIteration() {
   // See what was written
   unsigned char *outBioData;
   int outBioLen = BIO_get_mem_data(mOutBio, &outBioData);
+  if (outBioLen > DTLS_MTU) {
+    ELOG_WARN("message: BIO data bigger than MTU - packet could be lost, outBioLen %u, MTU %u",
+        outBioLen, DTLS_MTU);
+  }
 
   // Now handle handshake errors */
   switch (sslerr = SSL_get_error(mSsl, r)) {
     case SSL_ERROR_NONE:
       mHandshakeCompleted = true;
       mSocketContext->handshakeCompleted();
-      if (mReadTimer) {
-        mReadTimer->invalidate();
-      }
-      mReadTimer = 0;
       break;
     case SSL_ERROR_WANT_READ:
-      // There are two cases here:
-      // (1) We didn't get enough data. In this case we leave the
-      //     timers alone and wait for more packets.
-      // (2) We did get a full flight and then handled it, but then
-      //     wrote some more message and now we need to flush them
-      //     to the network and now reset the timers
-      //
-      // If data was written then this means we got a complete
-      // something or a retransmit so we need to reset the timer
-      if (outBioLen) {
-        if (mReadTimer) mReadTimer->invalidate();
-        mReadTimer = new DtlsSocketTimer(0, this);
-        mSocketContext->addTimerToContext(mReadTimer, 500);
-      }
-
       break;
     default:
       ELOG_ERROR("SSL error %d", sslerr);
@@ -277,6 +250,28 @@ void DtlsSocket::computeFingerprint(X509 *cert, char *fingerprint) {
   }
 }
 
+void DtlsSocket::handleTimeout() {
+  (void) BIO_reset(mInBio);
+  (void) BIO_reset(mOutBio);
+  if (DTLSv1_handle_timeout(mSsl) > 0) {
+    ELOG_DEBUG("Dtls timeout occurred!");
+
+    // See what was written
+    unsigned char *outBioData;
+    int outBioLen = BIO_get_mem_data(mOutBio, &outBioData);
+    if (outBioLen > DTLS_MTU) {
+      ELOG_WARN("message: BIO data bigger than MTU - packet could be lost, outBioLen %u, MTU %u",
+          outBioLen, DTLS_MTU);
+    }
+
+    // If mOutBio is now nonzero-length, then we need to write the
+    // data to the network. TODO(pedro): warning, MTU issues!
+    if (outBioLen) {
+      mSocketContext->write(outBioData, outBioLen);
+    }
+  }
+}
+
 // TODO(pedro): assert(0) into exception, as elsewhere
 void DtlsSocket::createSrtpSessionPolicies(srtp_policy_t& outboundPolicy, srtp_policy_t& inboundPolicy) {
   assert(mHandshakeCompleted);
@@ -314,10 +309,10 @@ void DtlsSocket::createSrtpSessionPolicies(srtp_policy_t& outboundPolicy, srtp_p
   memcpy(client_master_key_and_salt + key_len, srtp_key->clientMasterSalt, salt_len);
 
   /* initialize client SRTP policy from profile  */
-  err_status_t err = crypto_policy_set_from_profile_for_rtp(&client_policy.rtp, profile);
+  srtp_err_status_t err = srtp_crypto_policy_set_from_profile_for_rtp(&client_policy.rtp, profile);
   if (err) assert(0);
 
-  err = crypto_policy_set_from_profile_for_rtcp(&client_policy.rtcp, profile);
+  err = srtp_crypto_policy_set_from_profile_for_rtcp(&client_policy.rtcp, profile);
   if (err) assert(0);
   client_policy.next = NULL;
 
@@ -339,10 +334,10 @@ void DtlsSocket::createSrtpSessionPolicies(srtp_policy_t& outboundPolicy, srtp_p
   delete srtp_key;
 
   /* initialize server SRTP policy from profile  */
-  err = crypto_policy_set_from_profile_for_rtp(&server_policy.rtp, profile);
+  err = srtp_crypto_policy_set_from_profile_for_rtp(&server_policy.rtp, profile);
   if (err) assert(0);
 
-  err = crypto_policy_set_from_profile_for_rtcp(&server_policy.rtcp, profile);
+  err = srtp_crypto_policy_set_from_profile_for_rtcp(&server_policy.rtcp, profile);
   if (err) assert(0);
   server_policy.next = NULL;
 
